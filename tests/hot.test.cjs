@@ -16,6 +16,11 @@ function setup(t, fetcher, markup = '<aside class="sidebar"><div class="user-car
 }
 test('four periods, top ten, expand, collapse, safe links', async t => {
     const s = setup(t); await tick();
+    assert.equal(s.q('.sb-hot-data-note, .sb-hot-update, .sb-hot-note'), null);
+    assert.equal(s.all('.sb-hot-source .sb-hot-logo').length, 1);
+    assert.equal(s.q('.sb-hot-logo').getAttribute('aria-hidden'), 'true');
+    assert.equal(s.q('.sb-hot-logo path').getAttribute('fill'), '#FFD02F');
+    assert.equal(s.q('.sb-hot-source').textContent, '烧饼热榜');
     assert.deepEqual(s.all('[data-period]').map(x => x.textContent), ['实时', '24小时', '周榜', '30天榜']);
     assert.equal(s.q('.user-card').nextElementSibling.id, 'sb-hot-panel');
     assert.equal(s.all('.sb-hot-item:not([hidden])').length, 10);
@@ -46,7 +51,7 @@ test('failure retry retains previous ranking', async t => {
 });
 test('baseline, warming, outage and stale explanations', async t => {
     for(const [changes, pattern] of [[{status:{baseline_complete:false,stale:true},boards:{views:[],replies:[]}},/建立全站基线/],[{warming_up:true,observed_seconds:7200},/已记录2小时/],[{coverage_gap:true},/采集中断/],[{status:{baseline_complete:true,stale:true}},/采集延迟/]]){
-        const s=setup(t,url=>response(url,changes));await tick();assert.match(s.q('.sb-hot-data-note').textContent,pattern);
+        const s=setup(t,url=>response(url,changes));await tick();assert.match(s.q('.sb-hot-status').title,pattern);
     }
 });
 test('reject unsafe topics, invalid JSON contract and wrong period', async t => {
@@ -77,12 +82,12 @@ test('deferred sidebar mounts once, absent sidebar sends no ranking request', as
 test('official source uses sync label, upstream notes and stale-cache warning', async t => {
     const changes={source:'official',warming_up:false,metric_notes:{replies:'按最近24小时内新增回复数排名'},status:{baseline_complete:true,stale:false}};
     const s=setup(t,url=>response(url,changes));await tick();s.q('[data-period="1"]').click();await tick();
-    assert.match(s.q('.sb-hot-data-note').textContent,/官方榜单/);
+    assert.match(s.q('.sb-hot-status').title,/官方榜单/);
     assert.match(s.q('.sb-hot-status').textContent,/同步/);
     assert.match(s.q('.sb-hot-link').title,/官方统计/);
     assert.match(s.q('.sb-hot-link').title,/新增回复数排名/);
     assert.equal(s.q('.sb-hot-source').href,'https://sb.sb/pages/top/');
     const delayed=setup(t,url=>response(url,{...changes,status:{baseline_complete:true,stale:false,refresh_error:'offline'}}));await tick();
-    assert.match(delayed.q('.sb-hot-data-note').textContent,/同步延迟/);
+    assert.match(delayed.q('.sb-hot-status').title,/同步延迟/);
     assert.equal(delayed.all('.sb-hot-item').length,20);
 });

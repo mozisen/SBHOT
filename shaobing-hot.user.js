@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         烧饼论坛热榜
 // @namespace    https://sb.sb/
-// @version      2.1.0
+// @version      2.1.1
 // @description  烧饼论坛热榜：日/月榜优先官方，实时/周榜后台统计，低负载混合模式。
 // @author       烧饼热榜适配；原插件 https://www.nodeseek.com/space/10539
 // @match        https://sb.sb/*
@@ -23,7 +23,9 @@
 // Adapted from NodeSeek 热榜插件 1.1 (MIT): sidebar ranking and expand/collapse UI.
 (function () {
     'use strict';
-    const VERSION = '2.1.0';
+    const VERSION = '2.1.1';
+    // Reuse the forum's yellow SB brand mark (https://sb.sb/).
+    const LOGO = "<svg class=\"sb-hot-logo\" viewBox=\"0 0 46 46\" width=\"26\" height=\"26\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M0 0H46V14l-6 9 6 9V46H0V32l6-9-6-9z\" fill=\"#FFD02F\"></path><path d=\"M16.74 30.64Q15.04 30.64 13.74 30.04 12.43 29.43 11.7 28.29 10.96 27.16 10.96 25.56v-.59h2.73v.59q0 1.33.82 1.99t2.23.66q1.43.0 2.13-.57T19.57 26.19Q19.57 25.58 19.23 25.21 18.88 24.83 18.22 24.59 17.56 24.34 16.61 24.13L16.13 24.03Q14.62 23.69 13.54 23.18q-1.09-.52-1.66-1.36-.58-.84-.58-2.18Q11.3 18.3 11.94 17.34 12.58 16.38 13.75 15.87q1.16-.51 2.74-.51Q18.06 15.36 19.29 15.89 20.52 16.43 21.22 17.49 21.93 18.55 21.93 20.14V20.77H19.2V20.14Q19.2 19.3 18.87 18.79 18.54 18.27 17.94 18.03 17.33 17.79 16.49 17.79 15.23 17.79 14.63 18.26 14.03 18.74 14.03 19.56 14.03 20.1 14.31 20.48 14.6 20.86 15.16 21.11 15.73 21.36 16.61 21.55L17.09 21.66Q18.67 21.99 19.84 22.52q1.16.52 1.81 1.38Q22.3 24.76 22.3 26.11q0 1.34-.68 2.36t-1.93 1.6q-1.25.57-2.95.57zM30.59 30.35H22.94V27.91h1.93V18.09H22.94V15.65H30.5Q31.84 15.65 32.84 16.1 33.84 16.55 34.4 17.38 34.95 18.21 34.95 19.37V19.58Q34.95 20.59 34.58 21.23 34.2 21.87 33.68 22.21 33.17 22.56 32.71 22.71V23.08Q33.17 23.21 33.71 23.56 34.26 23.9 34.65 24.55 35.04 25.21 35.04 26.26V26.46q0 1.22-.57 2.09Q33.9 29.43 32.91 29.89 31.91 30.35 30.59 30.35zm-2.94-6.13v3.61h2.6Q31.15 27.83 31.71 27.39 32.27 26.95 32.27 26.13V25.92Q32.27 25.1 31.72 24.66 31.17 24.22 30.25 24.22h-2.6zm0-6.05V21.7h2.56Q31.07 21.7 31.62 21.26 32.18 20.82 32.18 20.04V19.83Q32.18 19.03 31.63 18.6 31.09 18.17 30.21 18.17H27.65z\" fill=\"#111\"></path></svg>";
     const UPDATE_INTERVAL = 60 * 60 * 1000;
     const SERVICE = 'https://sbhot.voee.de';
     const UPDATE_META = `${SERVICE}/shaobing-hot.meta.js`;
@@ -50,20 +52,12 @@
     }
 
     function showUpdateState() {
-        const target = document.querySelector('#sb-hot-panel .sb-hot-update');
+        const target = document.querySelector('#sb-hot-panel .sb-hot-refresh');
         if (!target) return;
-        target.replaceChildren();
         const saved = readUpdateState();
-        if (newerVersion(String(saved.latest || ''))) {
-            const link = element('a', '', `发现 v${saved.latest} · 安装更新`);
-            link.href = UPDATE_SCRIPT;
-            link.target = '_blank'; link.rel = 'noopener noreferrer';
-            target.append(link);
-            target.title = '后台自动安装由 Tampermonkey 设置控制；点击可立即进入安装页。';
-        } else {
-            target.textContent = updateMessage || `v${VERSION} · 每小时检查新版`;
-            target.removeAttribute('title');
-        }
+        target.title = '刷新热榜\n' + (newerVersion(String(saved.latest || ''))
+            ? `发现 v${saved.latest} · 可通过 Tampermonkey 更新`
+            : updateMessage || `v${VERSION} · 每小时检查新版`);
     }
 
     // Version detection only. Tampermonkey owns installation and its update schedule.
@@ -185,14 +179,14 @@
         if (!posts.length) list.append(element('li', 'sb-hot-message', official ? '该时段暂无官方热门主题' : result.status.baseline_complete ? '该时段暂无观测到的新增热度' : '正在建立全站基线，稍后开始统计'));
         const hours = Math.floor(result.observed_seconds / 3600);
         source.href = official ? `https://sb.sb/pages/top/${period === 3 ? '30d/' : ''}` : SERVICE;
-        panel.querySelector('.sb-hot-data-note').textContent = official ?
+        status.title = official ?
             (result.status.stale || result.status.refresh_error ? '官方同步延迟 · 显示上次榜单' : '官方榜单 · 每15分钟同步') :
             !result.status.baseline_complete ? '正在建立全站基线' :
             result.status.stale ? '采集延迟 · 暂显示已有统计' :
             result.coverage_gap ? '统计区间存在采集中断' :
             result.warming_up ? `统计积累中 · 已记录${hours ? `${hours}小时` : `${Math.floor(result.observed_seconds / 60)}分钟`}` :
             '服务端快照统计 · 实时为近1小时';
-        panel.querySelector('.sb-hot-data-note').title = official && typeof result.metric_notes?.[metric] === 'string' ? result.metric_notes[metric] : '';
+        if (official && typeof result.metric_notes?.[metric] === 'string') status.title += '\n' + result.metric_notes[metric];
         posts.forEach((post, index) => {
             const li = element('li', 'sb-hot-item');
             li.hidden = !expanded && index >= LIMIT;
@@ -222,7 +216,7 @@
         refresh.disabled = true;
         const saved = cache.get(index);
         if (saved) render(saved);
-        else { list.replaceChildren(element('li', 'sb-hot-message', '正在读取热榜…')); toggle.hidden = true; panel.querySelector('.sb-hot-data-note').textContent = '服务端持续统计'; }
+        else { list.replaceChildren(element('li', 'sb-hot-message', '正在读取热榜…')); toggle.hidden = true; status.title = '服务端持续统计'; }
         try {
             const result = await fetchBoards(index, force);
             if (token !== revision) return;
@@ -247,19 +241,16 @@
         panel.id = 'sb-hot-panel';
         panel.setAttribute('aria-label', '烧饼论坛热榜');
         // Static markup only; all downloaded content is rendered with textContent.
-        panel.innerHTML = `<div class="sb-hot-header"><a class="sb-hot-source" href="https://sbhot.voee.de/">烧饼热榜</a><button type="button" class="sb-hot-refresh" aria-label="刷新热榜" title="刷新热榜">↻</button></div>
+        panel.innerHTML = `<div class="sb-hot-header"><a class="sb-hot-source" href="https://sbhot.voee.de/">${LOGO}<span>烧饼热榜</span></a><button type="button" class="sb-hot-refresh" aria-label="刷新热榜" title="刷新热榜">↻</button></div>
             <div class="sb-hot-periods" role="group" aria-label="榜单时间范围">${PERIODS.map((p, i) => `<button type="button" data-period="${i}" aria-pressed="${i === 0}">${p.label}</button>`).join('')}</div>
             <div class="sb-hot-metrics" role="group" aria-label="排序依据"><button type="button" data-metric="replies" aria-pressed="true">回复热度</button><button type="button" data-metric="views" aria-pressed="false">浏览热度</button></div>
-            <ol class="sb-hot-list" id="sb-hot-list"></ol><div class="sb-hot-footer"><span class="sb-hot-status" role="status" aria-live="polite"></span><button type="button" class="sb-hot-toggle" aria-controls="sb-hot-list" aria-expanded="false" hidden>展开全部 ▾</button></div><p class="sb-hot-note sb-hot-data-note">服务端持续统计</p>`;
+            <ol class="sb-hot-list" id="sb-hot-list"></ol><div class="sb-hot-footer"><span class="sb-hot-status" role="status" aria-live="polite"></span><button type="button" class="sb-hot-toggle" aria-controls="sb-hot-list" aria-expanded="false" hidden>展开全部 ▾</button></div>`;
         const userCard = sidebar.querySelector('.user-card');
         if (userCard?.parentElement === sidebar) userCard.after(panel);
         else sidebar.prepend(panel);
         list = panel.querySelector('.sb-hot-list'); status = panel.querySelector('.sb-hot-status');
         toggle = panel.querySelector('.sb-hot-toggle'); refresh = panel.querySelector('.sb-hot-refresh');
         source = panel.querySelector('.sb-hot-source');
-        const updateNote = element('p', 'sb-hot-note sb-hot-update');
-        updateNote.setAttribute('role', 'status');
-        panel.append(updateNote);
         showUpdateState();
         panel.querySelectorAll('[data-period]').forEach(button => button.addEventListener('click', () => {
             period = Number(button.dataset.period); expanded = false; update();
@@ -281,7 +272,8 @@
         #sb-hot-panel button:disabled { opacity:.5; cursor:wait; }
         #sb-hot-panel [hidden] { display:none!important; }
         #sb-hot-panel .sb-hot-header { display:flex; align-items:center; justify-content:space-between; padding:4px 12px; }
-        #sb-hot-panel .sb-hot-source { color:inherit; font-size:15px; font-weight:700; text-decoration:none; }
+        #sb-hot-panel .sb-hot-source { display:inline-flex; align-items:center; gap:8px; color:inherit; font-size:15px; font-weight:700; text-decoration:none; }
+        #sb-hot-panel .sb-hot-logo { display:block; flex:none; width:26px; height:26px; }
         #sb-hot-panel .sb-hot-refresh { width:44px; font-size:24px; }
         #sb-hot-panel .sb-hot-periods { display:flex; margin:0 12px; padding:3px; background:var(--panel-alt,#fafbfc); border:1px solid var(--line,#ddd); border-radius:9px; }
         #sb-hot-panel .sb-hot-periods button { flex:1; min-width:0; padding:0 6px; white-space:nowrap; font-size:13px; }
@@ -301,7 +293,6 @@
         #sb-hot-panel .sb-hot-count { font-size:12px; color:var(--text-muted,#555); font-variant-numeric:tabular-nums; }
         #sb-hot-panel .sb-hot-footer { display:flex; align-items:center; justify-content:space-between; gap:6px; padding:0 12px; min-height:44px; border-top:1px solid var(--line,#ddd); font-size:12px; color:var(--text-muted,#555); }
         #sb-hot-panel .sb-hot-toggle { flex-shrink:0; padding:0 4px; }
-        #sb-hot-panel .sb-hot-note { margin:0; padding:0 12px 10px; font-size:12px; color:var(--text-muted,#555); }
         #sb-hot-panel .sb-hot-message { padding:32px 12px; text-align:center; font-size:13px; color:var(--text-muted,#555); }
         #sb-hot-panel .sb-hot-error { color:var(--danger,#cf2b2b); }
     `);

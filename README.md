@@ -1,4 +1,4 @@
-# 烧饼论坛热榜 2.1.0
+# 烧饼论坛热榜 2.1.1
 
 **[安装 / 更新脚本](https://sbhot.voee.de/shaobing-hot.user.js)** · [服务首页](https://sbhot.voee.de/) · [采集状态](https://sbhot.voee.de/api/status)
 
@@ -33,7 +33,7 @@
 - 安装文件：`https://sbhot.voee.de/shaobing-hot.user.js`
 - 更新元数据：`https://sbhot.voee.de/shaobing-hot.meta.js`
 - 版本检测：烧饼页面运行时每小时检测，跨刷新保存检查时间，油猴菜单可以立即检查。
-- GitHub 保留 v2.1.0 迁移版本与源码，旧版可通过旧更新地址取得迁移版；因新增域名权限，Tampermonkey 可能要求确认。也可直接用新链接覆盖安装一次。
+- GitHub 保留 v2.1.1 迁移版本与源码，旧版可通过旧更新地址取得迁移版；因新增域名权限，Tampermonkey 可能要求确认。也可直接用新链接覆盖安装一次。
 
 在 Tampermonkey 设置的“脚本更新”中开启检查更新与“自动安装”。脚本自身不能修改管理器全局间隔或静默替换已安装源码，实际安装由 Tampermonkey 调度；网页内每小时检测不代表每小时强制安装。休眠/标签挂起后会补查；关闭所有烧饼页面后网页版本检测暂停，管理器的原生更新独立运行。
 
@@ -66,3 +66,7 @@ node tests/browser.cjs
 发布时同步递增脚本头部、`VERSION`、package和lockfile版本，运行 `npm run build:meta`，测试通过后同版本原子部署两个脚本文件。代码提交GitHub不会自动部署服务器。[部署、备份与回滚说明](deploy/README.md)。
 
 原插件作者：https://www.nodeseek.com/space/10539；原 NodeSeek 热榜插件 1.1 声明 MIT，保留来源署名。论坛数据来自 https://sb.sb/。本仓库不包含本地参考助手、服务器凭据或会话记录。
+
+### v2.1.1 界面精简
+
+标题前增加论坛黄色SB标志，删除底部两行统计/版本说明。统计来源及积累状态可悬停时间查看；版本检查结果可悬停刷新按钮查看，后台检查仍正常运行。

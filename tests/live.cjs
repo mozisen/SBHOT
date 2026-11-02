@@ -22,13 +22,13 @@ const assert = require('node:assert/strict');
             await page.locator(`[data-period="${i}"]`).click();
             await page.waitForFunction(() => document.querySelector('#sb-hot-panel').getAttribute('aria-busy') === 'false');
             assert.doesNotMatch(await page.locator('.sb-hot-status').textContent(), /失败/);
-            assert.ok(await page.locator('.sb-hot-data-note').textContent());
+            assert.ok(await page.locator('.sb-hot-status').getAttribute('title'));
             if (i === 1 || i === 3) {
-                assert.match(await page.locator('.sb-hot-data-note').textContent(), /官方/);
-                assert.doesNotMatch(await page.locator('.sb-hot-data-note').textContent(), /积累/);
+                assert.match(await page.locator('.sb-hot-status').getAttribute('title'), /官方/);
+                assert.doesNotMatch(await page.locator('.sb-hot-status').getAttribute('title'), /积累/);
             }
         }
-        await page.waitForFunction(() => document.querySelector('.sb-hot-update').textContent.includes('已检查新版'));
+        await page.waitForFunction(() => document.querySelector('.sb-hot-refresh').title.includes('已检查新版'));
         fs.mkdirSync('artifacts', { recursive: true });
         await page.locator('#sb-hot-panel').screenshot({ path: 'artifacts/live-warming.png' });
         const meta = await page.request.get('https://sbhot.voee.de/shaobing-hot.meta.js');

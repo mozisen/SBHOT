@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         烧饼论坛热榜
 // @namespace    https://sb.sb/
-// @version      2.1.0
+// @version      2.1.1
 // @description  烧饼论坛热榜：日/月榜优先官方，实时/周榜后台统计，低负载混合模式。
 // @author       烧饼热榜适配；原插件 https://www.nodeseek.com/space/10539
 // @match        https://sb.sb/*
