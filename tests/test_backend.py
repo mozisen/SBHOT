@@ -11,7 +11,7 @@ from pathlib import Path
 from http.server import ThreadingHTTPServer
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
-from core import Store, parse_page, WINDOWS
+from core import Store, parse_page, parse_official, WINDOWS
 import server
 
 FIXTURE = (Path(__file__).parent / 'fixtures/topics.html').read_text(encoding='utf-8')
@@ -51,10 +51,10 @@ class BackendTests(unittest.TestCase):
     def test_baseline_is_not_historical_activity_and_dedup(self):
         self.store.ingest([self.post()], self.now)
         self.store.complete_full(self.now, self.now + 1)
-        self.assertEqual(self.store.ranking('daily', self.now + 2)['boards']['views'], [])
+        self.assertEqual(self.store.ranking('weekly', self.now + 2)['boards']['views'], [])
         self.store.ingest([self.post(views=110, replies=12)], self.now + 300)
         self.store.ingest([self.post(views=110, replies=12)], self.now + 301)
-        rank = self.store.ranking('daily', self.now + 302)
+        rank = self.store.ranking('weekly', self.now + 302)
         self.assertEqual(rank['boards']['views'][0]['count'], 10)
         self.assertEqual(rank['boards']['replies'][0]['count'], 2)
         self.assertTrue(rank['warming_up'])
@@ -77,11 +77,11 @@ class BackendTests(unittest.TestCase):
 
     def test_outages_and_stale_are_not_complete(self):
         self.store.complete_full(self.now, self.now + 1)
-        self.store.complete_full(self.now + 10000, self.now + 10010)
-        rank = self.store.ranking('daily', self.now + 10011)
+        self.store.complete_full(self.now + 14000, self.now + 14010)
+        rank = self.store.ranking('weekly', self.now + 14011)
         self.assertTrue(rank['coverage_gap'])
         self.assertTrue(rank['warming_up'])
-        self.assertTrue(self.store.status(self.now + 20000)['stale'])
+        self.assertTrue(self.store.status(self.now + 30000)['stale'])
 
     def test_restart_persistence(self):
         self.store.ingest([self.post()], self.now)
@@ -101,7 +101,7 @@ class BackendTests(unittest.TestCase):
         self.store.ingest([self.post(id=2, published=None, views=7, replies=2)], self.now + 110)
         self.store.ingest([self.post(id=2, published=self.now + 50, views=8, replies=3)], self.now + 120)
         self.store.ingest([self.post(id=2, published=self.now + 50, views=8, replies=3)], self.now + 130)
-        rank = self.store.ranking('daily', self.now + 140)
+        rank = self.store.ranking('weekly', self.now + 140)
         self.assertEqual(rank['boards']['views'][0]['count'], 8)
         self.assertEqual(rank['boards']['replies'][0]['count'], 3)
 
@@ -111,7 +111,7 @@ class BackendTests(unittest.TestCase):
         c = Collector(self.store, delay=0)
         with self.store.db:
             self.store.set('last_fast_attempt', self.now)
-        with patch('collector.time.time', return_value=self.now), patch.object(c, 'fetch', side_effect=[
+        with patch.object(c, 'sync_official'), patch('collector.time.time', return_value=self.now), patch.object(c, 'fetch', side_effect=[
             ([self.post()], '/new/page/2/'), ([self.post(id=2)], None)
         ]):
             c.run_once()
@@ -128,7 +128,7 @@ class BackendTests(unittest.TestCase):
         c = Collector(self.store, delay=0)
         with self.store.db:
             self.store.set('full_cursor', {'path': '/new/page/2/', 'start': self.now, 'pages': 1})
-        with patch.object(c, 'fetch', side_effect=TimeoutError('offline')):
+        with patch.object(c, 'sync_official'), patch.object(c, 'fetch', side_effect=TimeoutError('offline')):
             with self.assertRaises(TimeoutError):
                 c.run_once()
         self.assertFalse(self.store.status(self.now)['baseline_complete'])
@@ -136,6 +136,9 @@ class BackendTests(unittest.TestCase):
 
     def test_http_routes_and_no_path_traversal(self):
         server.DATA = Path(self.temp.name)
+        with self.store.db:
+            for period in ('daily', 'monthly'):
+                self.store.set('official_' + period, {'updated_at': self.now, 'boards': {'views': [], 'replies': []}})
         self.store.ingest([self.post()], self.now)
         http = ThreadingHTTPServer(('127.0.0.1', 0), server.Handler)
         thread = threading.Thread(target=http.serve_forever, daemon=True)
@@ -154,6 +157,61 @@ class BackendTests(unittest.TestCase):
             http.shutdown()
             http.server_close()
             thread.join()
+
+    def test_official_real_parser_order_and_notes(self):
+        html = (Path(__file__).parent / 'fixtures/top.html').read_text(encoding='utf-8')
+        parsed = parse_official(html)
+        self.assertEqual(len(parsed['boards']['replies']), 20)
+        self.assertEqual(parsed['boards']['replies'][0]['href'], '/t/15643/')
+        self.assertEqual(parsed['boards']['replies'][0]['count'], 83)
+        self.assertIn('24', parsed['metric_notes']['replies'])
+        with self.assertRaises(ValueError):
+            parse_official('<h1>blocked</h1>')
+        with self.assertRaises(ValueError):
+            parse_official(html.replace('/t/15643/', 'https://evil.test/t/15643/'))
+
+    def test_official_uses_cache_without_local_baseline_and_marks_delay(self):
+        with self.assertRaises(ValueError):
+            self.store.ranking('daily', self.now)
+        cached = {'boards': {'views': [], 'replies': []}, 'updated_at': self.now, 'metric_notes': {}}
+        with self.store.db:
+            self.store.set('official_daily', cached)
+        result = self.store.ranking('daily', self.now + 1)
+        self.assertEqual(result['source'], 'official')
+        self.assertFalse(result['warming_up'])
+        self.assertFalse(result['status']['stale'])
+        self.assertTrue(self.store.ranking('daily', self.now + 1801)['status']['stale'])
+
+    def test_official_sync_is_shared_throttled_and_failure_preserves_cache(self):
+        from collector import Collector
+        from unittest.mock import patch
+        html = (Path(__file__).parent / 'fixtures/top.html').read_text(encoding='utf-8')
+        c = Collector(self.store)
+        with patch.object(c, 'download', return_value=html) as fetch, patch('collector.time.time', return_value=self.now):
+            c.sync_official(self.now)
+            c.sync_official(self.now + 899)
+            self.assertEqual(fetch.call_count, 2)
+        with patch.object(c, 'download', side_effect=TimeoutError('offline')), patch('collector.LOG.exception'):
+            c.sync_official(self.now + 900)
+        self.assertEqual(self.store.get('official_daily')['updated_at'], self.now)
+        self.assertEqual(self.store.get('official_daily_error'), 'offline')
+
+    def test_hourly_full_scan_and_nine_day_retention(self):
+        from collector import Collector
+        from unittest.mock import patch
+        with self.store.db:
+            self.store.set('last_full_at', self.now)
+            self.store.set('last_fast_attempt', self.now + 3599)
+            self.store.db.execute('INSERT INTO deltas VALUES(1,?,0,1,1)', (self.now - 10 * 86400,))
+            self.store.db.execute('INSERT INTO deltas VALUES(1,?,0,1,1)', (self.now - 8 * 86400,))
+        c = Collector(self.store)
+        with patch.object(c, 'sync_official'), patch.object(c, 'fetch', return_value=([self.post()], None)) as fetch, patch('collector.time.time', return_value=self.now + 3599):
+            c.run_once()
+            fetch.assert_not_called()
+        with patch.object(c, 'sync_official'), patch.object(c, 'fetch', return_value=([self.post()], None)) as fetch, patch('collector.time.time', return_value=self.now + 3600):
+            c.run_once()
+            fetch.assert_called_once_with('/new/')
+        self.assertEqual(self.store.db.execute('SELECT COUNT(*) FROM deltas').fetchone()[0], 1)
 
 
 if __name__ == '__main__':

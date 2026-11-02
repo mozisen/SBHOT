@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         烧饼论坛热榜
 // @namespace    https://sb.sb/
-// @version      2.0.0
-// @description  烧饼论坛热榜：实时、24小时、周榜、30天榜，服务器持续统计浏览/回复增量。
+// @version      2.1.0
+// @description  烧饼论坛热榜：日/月榜优先官方，实时/周榜后台统计，低负载混合模式。
 // @author       烧饼热榜适配；原插件 https://www.nodeseek.com/space/10539
 // @match        https://sb.sb/*
 // @grant        GM_addStyle
@@ -23,7 +23,7 @@
 // Adapted from NodeSeek 热榜插件 1.1 (MIT): sidebar ranking and expand/collapse UI.
 (function () {
     'use strict';
-    const VERSION = '2.0.0';
+    const VERSION = '2.1.0';
     const UPDATE_INTERVAL = 60 * 60 * 1000;
     const SERVICE = 'https://sbhot.voee.de';
     const UPDATE_META = `${SERVICE}/shaobing-hot.meta.js`;
@@ -181,19 +181,24 @@
     function render(result) {
         list.replaceChildren();
         const posts = result.boards[metric];
-        if (!posts.length) list.append(element('li', 'sb-hot-message', result.status.baseline_complete ? '该时段暂无观测到的新增热度' : '正在建立全站基线，稍后开始统计'));
+        const official = result.source === 'official';
+        if (!posts.length) list.append(element('li', 'sb-hot-message', official ? '该时段暂无官方热门主题' : result.status.baseline_complete ? '该时段暂无观测到的新增热度' : '正在建立全站基线，稍后开始统计'));
         const hours = Math.floor(result.observed_seconds / 3600);
-        panel.querySelector('.sb-hot-data-note').textContent = !result.status.baseline_complete ? '正在建立全站基线' :
+        source.href = official ? `https://sb.sb/pages/top/${period === 3 ? '30d/' : ''}` : SERVICE;
+        panel.querySelector('.sb-hot-data-note').textContent = official ?
+            (result.status.stale || result.status.refresh_error ? '官方同步延迟 · 显示上次榜单' : '官方榜单 · 每15分钟同步') :
+            !result.status.baseline_complete ? '正在建立全站基线' :
             result.status.stale ? '采集延迟 · 暂显示已有统计' :
             result.coverage_gap ? '统计区间存在采集中断' :
             result.warming_up ? `统计积累中 · 已记录${hours ? `${hours}小时` : `${Math.floor(result.observed_seconds / 60)}分钟`}` :
             '服务端快照统计 · 实时为近1小时';
+        panel.querySelector('.sb-hot-data-note').title = official && typeof result.metric_notes?.[metric] === 'string' ? result.metric_notes[metric] : '';
         posts.forEach((post, index) => {
             const li = element('li', 'sb-hot-item');
             li.hidden = !expanded && index >= LIMIT;
             const link = element('a', 'sb-hot-link');
             link.href = post.href;
-            link.title = `${post.title}\n作者：${post.author || '未知'} · ${post.forum}\n${PERIODS[period].label}${metric === 'views' ? '浏览' : '回复'}观测增量：${post.count}`;
+            link.title = `${post.title}\n作者：${post.author || '未知'} · ${post.forum}\n${PERIODS[period].label}${metric === 'views' ? '浏览' : '回复'}${official ? '官方统计' : '观测增量'}：${post.count}${official && typeof result.metric_notes?.[metric] === 'string' ? '\n' + result.metric_notes[metric] : ''}`;
             link.append(element('span', `sb-hot-rank sb-hot-rank-${index + 1}`, String(index + 1)),
                 element('span', 'sb-hot-title', post.title), element('span', 'sb-hot-count', String(post.count)));
             li.append(link);
@@ -222,7 +227,7 @@
             const result = await fetchBoards(index, force);
             if (token !== revision) return;
             render(result);
-            status.textContent = result.updated_at ? `${new Date(result.updated_at * 1000).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 采集` : '等待首次采集';
+            status.textContent = result.updated_at ? `${new Date(result.updated_at * 1000).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} ${result.source === 'official' ? '同步' : '采集'}` : '等待首次采集';
         } catch (error) {
             if (token !== revision) return;
             status.classList.add('sb-hot-error');

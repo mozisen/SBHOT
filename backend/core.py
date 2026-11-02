@@ -9,6 +9,47 @@ from bs4 import BeautifulSoup
 
 ORIGIN = 'https://sb.sb'
 WINDOWS = {'realtime': 3600, 'daily': 86400, 'weekly': 604800, 'monthly': 2592000}
+OFFICIAL_PATHS = {'daily': '/pages/top/', 'monthly': '/pages/top/30d/'}
+FULL_INTERVAL = 3600
+FULL_STALE = 10800
+OFFICIAL_INTERVAL = 900
+
+
+def parse_official(html):
+    doc = BeautifulSoup(html, 'html5lib')
+    boards, notes = {}, {}
+    for section in doc.select('.top-board'):
+        heading = section.select_one('.top-board-title')
+        title = re.sub(r'\s+', '', heading.get_text()) if heading else ''
+        metric = {'热门主题·浏览': 'views', '热门主题·回复': 'replies'}.get(title)
+        if not metric:
+            continue
+        note = section.select_one('.top-board-note')
+        # Optional closing </p> in upstream markup must not absorb the following list.
+        notes[metric] = ''.join(str(t) for t in note.find_all(string=True, recursive=False)).strip() if note else ''
+        boards[metric], seen = [], set()
+        for row in section.select('.top-row'):
+            link, score = row.select_one('.top-thread-title[href]'), row.select_one('.top-score')
+            if not link or not score:
+                raise ValueError('Invalid official topic row')
+            url = urlparse(urljoin(ORIGIN, link['href']))
+            if url.scheme != 'https' or url.netloc != 'sb.sb' or not re.fullmatch(r'/t/\d+/', url.path):
+                raise ValueError('Unsafe official topic URL')
+            for unit in score.select('.top-unit'):
+                unit.decompose()
+            count = score.get_text(strip=True).replace(',', '')
+            if not count.isdigit() or not link.get_text(strip=True):
+                raise ValueError('Invalid official count/title')
+            if url.path in seen:
+                continue
+            seen.add(url.path)
+            author, forum = row.select_one('.top-by'), row.select_one('.top-node')
+            boards[metric].append({'href': url.path, 'title': link.get_text(strip=True), 'count': int(count),
+                                   'author': author.get_text(strip=True) if author else '',
+                                   'forum': forum.get_text(strip=True) if forum else ''})
+    if set(boards) != {'views', 'replies'}:
+        raise ValueError('Missing official ranking boards')
+    return {'boards': boards, 'metric_notes': notes}
 
 
 def timestamp(value):
@@ -113,8 +154,8 @@ class Store:
             self.set('full_cursor', None)
             self.set('full_error', None)
             self.db.execute('INSERT OR REPLACE INTO full_runs VALUES(?,?)', (start, end))
-            self.db.execute('DELETE FROM deltas WHERE at < ?', (end - 32 * 86400,))
-            self.db.execute('DELETE FROM full_runs WHERE end < ?', (end - 33 * 86400,))
+            self.db.execute('DELETE FROM deltas WHERE at < ?', (end - 9 * 86400,))
+            self.db.execute('DELETE FROM full_runs WHERE end < ?', (end - 10 * 86400,))
 
     def status(self, now):
         baseline = self.get('baseline_at')
@@ -125,19 +166,33 @@ class Store:
                 'fast_error': self.get('fast_error'), 'last_fast_at': self.get('last_fast_at'),
                 'topics': self.db.execute('SELECT COUNT(*) FROM topics').fetchone()[0],
                 'baseline_complete': bool(baseline),
-                'stale': not last_full or now - last_full > 5400,
-                'sampling': {'active_seconds': 300, 'full_seconds': 1800},
+                'stale': not last_full or now - last_full > FULL_STALE,
+                'sampling': {'active_seconds': 300, 'full_seconds': FULL_INTERVAL, 'official_seconds': OFFICIAL_INTERVAL},
+                'sources': {'realtime': 'collected', 'weekly': 'collected', 'daily': 'official', 'monthly': 'official'},
+                'official': {p: {'updated_at': (self.get('official_' + p) or {}).get('updated_at'),
+                                 'error': self.get('official_' + p + '_error')} for p in OFFICIAL_PATHS},
                 'semantics': 'snapshot_delta_at_observation_time'}
 
     def ranking(self, period, now):
         window = WINDOWS[period]
+        if period in OFFICIAL_PATHS:
+            cached = self.get('official_' + period)
+            if not cached:
+                raise ValueError('Official ranking not yet available')
+            stale = now - cached['updated_at'] > 2 * OFFICIAL_INTERVAL
+            error = self.get('official_' + period + '_error')
+            return {**cached, 'schema_version': 1, 'source': 'official', 'period': period,
+                    'source_url': ORIGIN + OFFICIAL_PATHS[period], 'window_seconds': window,
+                    'generated_at': now, 'collected_since': None, 'warming_up': False,
+                    'coverage_gap': False, 'observed_seconds': window,
+                    'status': {'baseline_complete': True, 'stale': stale, 'refresh_error': error}}
         status = self.status(now)
         baseline = status['baseline_at']
         since = max(now - window, baseline or now)
         gap = self.db.execute('''SELECT 1 FROM (
           SELECT start, LAG(end) OVER (ORDER BY start) previous_end FROM full_runs
-        ) WHERE start > ? AND previous_end IS NOT NULL AND start-previous_end > 5400 LIMIT 1''',
-                              (now - window,)).fetchone() is not None
+        ) WHERE start > ? AND previous_end IS NOT NULL AND start-previous_end > ? LIMIT 1''',
+                              (now - window, FULL_STALE)).fetchone() is not None
         ready = bool(baseline and now - baseline >= window and not status['stale'] and not gap)
         boards = {}
         for metric in ('views', 'replies'):
@@ -148,7 +203,7 @@ class Store:
               GROUP BY t.id HAVING count > 0 ORDER BY count DESC,t.id DESC LIMIT 100''',
                                    (since, now, self.get('last_full_start', 0))).fetchall()
             boards[metric] = [dict(r, href=f"/t/{r['id']}/") for r in rows]
-        return {'schema_version': 1, 'period': period, 'window_seconds': window,
+        return {'schema_version': 1, 'source': 'collected', 'period': period, 'window_seconds': window,
                 'generated_at': now, 'updated_at': status['last_observation'],
                 'collected_since': baseline, 'warming_up': not ready, 'coverage_gap': gap,
                 'observed_seconds': max(0, min(window, now - baseline)) if baseline else 0,

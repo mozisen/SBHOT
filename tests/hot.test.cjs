@@ -74,3 +74,15 @@ test('deferred sidebar mounts once, absent sidebar sends no ranking request', as
     const aside=s.w.document.createElement('aside');aside.className='sidebar';s.w.document.body.append(aside);await tick();aside.append(s.w.document.createElement('div'));await tick();
     assert.equal(s.calls.length,1);assert.equal(s.all('#sb-hot-panel').length,1);
 });
+test('official source uses sync label, upstream notes and stale-cache warning', async t => {
+    const changes={source:'official',warming_up:false,metric_notes:{replies:'按最近24小时内新增回复数排名'},status:{baseline_complete:true,stale:false}};
+    const s=setup(t,url=>response(url,changes));await tick();s.q('[data-period="1"]').click();await tick();
+    assert.match(s.q('.sb-hot-data-note').textContent,/官方榜单/);
+    assert.match(s.q('.sb-hot-status').textContent,/同步/);
+    assert.match(s.q('.sb-hot-link').title,/官方统计/);
+    assert.match(s.q('.sb-hot-link').title,/新增回复数排名/);
+    assert.equal(s.q('.sb-hot-source').href,'https://sb.sb/pages/top/');
+    const delayed=setup(t,url=>response(url,{...changes,status:{baseline_complete:true,stale:false,refresh_error:'offline'}}));await tick();
+    assert.match(delayed.q('.sb-hot-data-note').textContent,/同步延迟/);
+    assert.equal(delayed.all('.sb-hot-item').length,20);
+});

@@ -5,7 +5,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from core import ORIGIN, Store, parse_page
+from core import ORIGIN, Store, parse_page, parse_official, OFFICIAL_PATHS, OFFICIAL_INTERVAL, FULL_INTERVAL
 
 LOG = logging.getLogger('sbhot')
 
@@ -16,11 +16,11 @@ class Collector:
         self.delay = delay
         self.last_request = 0
 
-    def fetch(self, path):
+    def download(self, path):
         time.sleep(max(0, self.delay - (time.monotonic() - self.last_request)))
         self.last_request = time.monotonic()
         req = urllib.request.Request(ORIGIN + path, headers={
-            'User-Agent': 'SBHOT/2.0 (+https://sbhot.voee.de/) public-topic-statistics',
+            'User-Agent': 'SBHOT/2.1 (+https://sbhot.voee.de/) public-topic-statistics',
             'Accept': 'text/html', 'Cache-Control': 'no-cache'})
         with urllib.request.urlopen(req, timeout=20) as response:
             if response.url != ORIGIN + path:
@@ -28,7 +28,27 @@ class Collector:
             raw = response.read(4 * 1024 * 1024 + 1)
             if len(raw) > 4 * 1024 * 1024:
                 raise ValueError('Page exceeds size limit')
-            return parse_page(raw.decode('utf-8'), path)
+            return raw.decode('utf-8')
+
+    def fetch(self, path):
+        return parse_page(self.download(path), path)
+
+    def sync_official(self, now):
+        for period, path in OFFICIAL_PATHS.items():
+            key = 'official_' + period
+            if now - self.store.get(key + '_attempt', 0) < OFFICIAL_INTERVAL:
+                continue
+            with self.store.db:
+                self.store.set(key + '_attempt', now)
+            try:
+                parsed = parse_official(self.download(path))
+                with self.store.db:
+                    self.store.set(key, {**parsed, 'updated_at': int(time.time())})
+                    self.store.set(key + '_error', None)
+            except Exception as exc:
+                LOG.exception('Official %s refresh failed; preserving last cache', period)
+                with self.store.db:
+                    self.store.set(key + '_error', str(exc)[:200])
 
     def fast(self):
         start = int(time.time())
@@ -53,8 +73,9 @@ class Collector:
 
     def run_once(self):
         now = int(time.time())
+        self.sync_official(now)
         cursor = self.store.get('full_cursor')
-        if cursor or now - self.store.get('last_full_at', 0) >= 1800:
+        if cursor or now - self.store.get('last_full_at', 0) >= FULL_INTERVAL:
             if not cursor:
                 cursor = {'path': '/new/', 'start': now, 'pages': 0}
             path = cursor['path']
