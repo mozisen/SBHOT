@@ -24,6 +24,8 @@ systemctl start sbhot-backup.service
 
 healthz 的 `ok` 代表服务可读数据库，`ready` 代表首次完整扫描成功；不代表已经积累7天或30天。`stale` 表示完整扫描超过90分钟未完成或尚未完成。API各榜 `warming_up`、`coverage_gap`、`observed_seconds` 分别说明窗口未完整、扫描缺口和积累时长。
 
+本地可执行 `node tests/live.cjs` 做显式联网的只读冒烟检查：实际访问生产四周期API及元数据，在浏览器中检查跨域通信和积累状态；它不会自动进入CI，避免每次提交都访问生产。
+
 ## 发布
 
 先跑 Node 与 Python 测试、浏览器检查。将 backend、deploy 和脚本打包经 `termark upload` 上传到新 release 目录；确认依赖、脚本头部和元数据一致。执行在线备份后，将 `current` 原子指向新目录，重启两个服务，检查 HTTPS 四个API和版本文件。GitHub main 同步同一客户端版本供旧用户升级到服务器更新源。后续仅发布 GitHub 不会自动部署服务器。
