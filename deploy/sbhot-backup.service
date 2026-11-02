@@ -1,0 +1,14 @@
+[Unit]
+Description=SBHOT SQLite daily backup
+
+[Service]
+Type=oneshot
+User=sbhot
+Group=sbhot
+Environment=SBHOT_DATA=/var/lib/sbhot
+ExecStart=/opt/sbhot/venv/bin/python /opt/sbhot/current/backend/backup.py
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/sbhot
+UMask=0027

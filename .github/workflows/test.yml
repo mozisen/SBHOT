@@ -16,3 +16,8 @@ jobs:
       - run: npm run check
       - run: npm run build:meta
       - run: git diff --exit-code -- shaobing-hot.meta.js
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r backend/requirements.txt
+      - run: python -m unittest discover -s tests -p test_backend.py -v

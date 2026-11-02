@@ -3,4 +3,6 @@ node_modules/
 *.tmp.css
 artifacts/
 .publish/
+.venv/
+*.sqlite3*
 __pycache__/

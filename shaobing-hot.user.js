@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         烧饼论坛热榜
 // @namespace    https://sb.sb/
-// @version      1.1.0
-// @description  烧饼论坛侧栏官方热门主题：24 小时、30 天、全部，浏览/回复双榜。
+// @version      2.0.0
+// @description  烧饼论坛热榜：实时、24小时、周榜、30天榜，服务器持续统计浏览/回复增量。
 // @author       烧饼热榜适配；原插件 https://www.nodeseek.com/space/10539
 // @match        https://sb.sb/*
 // @grant        GM_addStyle
@@ -10,11 +10,11 @@
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand
-// @connect      raw.githubusercontent.com
+// @connect      sbhot.voee.de
 // @homepageURL  https://github.com/mozisen/SBHOT
 // @supportURL   https://github.com/mozisen/SBHOT/issues
-// @updateURL    https://raw.githubusercontent.com/mozisen/SBHOT/main/shaobing-hot.meta.js
-// @downloadURL  https://raw.githubusercontent.com/mozisen/SBHOT/main/shaobing-hot.user.js
+// @updateURL    https://sbhot.voee.de/shaobing-hot.meta.js
+// @downloadURL  https://sbhot.voee.de/shaobing-hot.user.js
 // @noframes
 // @run-at       document-end
 // @license      MIT
@@ -23,10 +23,11 @@
 // Adapted from NodeSeek 热榜插件 1.1 (MIT): sidebar ranking and expand/collapse UI.
 (function () {
     'use strict';
-    const VERSION = '1.1.0';
+    const VERSION = '2.0.0';
     const UPDATE_INTERVAL = 60 * 60 * 1000;
-    const UPDATE_META = 'https://raw.githubusercontent.com/mozisen/SBHOT/main/shaobing-hot.meta.js';
-    const UPDATE_SCRIPT = 'https://raw.githubusercontent.com/mozisen/SBHOT/main/shaobing-hot.user.js';
+    const SERVICE = 'https://sbhot.voee.de';
+    const UPDATE_META = `${SERVICE}/shaobing-hot.meta.js`;
+    const UPDATE_SCRIPT = `${SERVICE}/shaobing-hot.user.js`;
     const UPDATE_KEY = 'sb-hot-update-v1';
     let checkingUpdate = false;
     let updateMessage = '';
@@ -106,72 +107,66 @@
         } catch { finish('版本检查失败 · 稍后重试'); }
     }
     const PERIODS = [
-        { label: '24 小时', path: '/pages/top/' },
-        { label: '30 天', path: '/pages/top/30d/' },
-        { label: '全部', path: '/pages/top/all/' }
+        { label: '实时', key: 'realtime' },
+        { label: '24小时', key: 'daily' },
+        { label: '周榜', key: 'weekly' },
+        { label: '30天榜', key: 'monthly' }
     ];
-    const TTL = 15 * 60 * 1000;
+    const TTL = 60 * 1000;
     const LIMIT = 10;
     const cache = new Map();
     const pending = new Map();
     let period = 0, metric = 'replies', expanded = false, revision = 0;
     let panel, list, status, toggle, refresh, source;
 
-    // Treat downloaded HTML as data. Only validated topic paths leave this parser.
-    function parseBoards(html) {
-        const doc = new DOMParser().parseFromString(html, 'text/html');
-        const boards = {};
-        for (const section of doc.querySelectorAll('.top-board')) {
-            const heading = section.querySelector('.top-board-title')?.textContent.replace(/\s+/g, '') || '';
-            const key = /^热门主题[·・]浏览$/.test(heading) ? 'views'
-                : /^热门主题[·・]回复$/.test(heading) ? 'replies' : null;
-            if (!key) continue;
-            const seen = new Set();
-            boards[key] = [];
-            const rows = section.querySelectorAll('.top-row');
-            for (const row of rows) {
-                const link = row.querySelector('a.top-thread-title[href]');
-                if (!link) continue;
-                let url;
-                try { url = new URL(link.getAttribute('href'), location.origin); } catch { continue; }
-                if (url.origin !== location.origin || !/^\/t\/\d+\/$/.test(url.pathname) || seen.has(url.pathname)) continue;
-                const title = link.textContent.trim();
-                const score = row.querySelector('.top-score')?.cloneNode(true);
-                score?.querySelectorAll('.top-unit').forEach(el => el.remove());
-                const rawCount = score?.textContent.trim().replace(/,/g, '') || '';
-                if (!title || !/^\d+$/.test(rawCount)) continue;
-                seen.add(url.pathname);
-                boards[key].push({ href: url.pathname, title, count: Number(rawCount),
-                    author: row.querySelector('.top-by')?.textContent.trim() || '',
-                    forum: row.querySelector('.top-node')?.textContent.trim() || '' });
-            }
-            if (rows.length && !boards[key].length) throw new Error('榜单格式已变化');
+    // Treat backend JSON as untrusted data; never insert downloaded HTML.
+    function parseRanking(data, key) {
+        if (!data || data.schema_version !== 1 || data.period !== key || !data.status ||
+            typeof data.status.baseline_complete !== 'boolean' || typeof data.status.stale !== 'boolean' ||
+            typeof data.warming_up !== 'boolean' || !Number.isFinite(data.observed_seconds) || data.observed_seconds < 0 ||
+            !(data.updated_at === null || Number.isFinite(data.updated_at) && data.updated_at > 0)) {
+            throw new Error('热榜数据格式不正确');
         }
-        if (!boards.views || !boards.replies) throw new Error('未找到官方热门主题榜单');
-        return boards;
+        const boards = {};
+        for (const metric of ['views', 'replies']) {
+            const rows = data.boards?.[metric];
+            if (!Array.isArray(rows) || rows.length > 100) throw new Error('榜单格式不正确');
+            const seen = new Set();
+            boards[metric] = [];
+            for (const row of rows) {
+                if (!row || typeof row.href !== 'string' || !/^\/t\/\d+\/$/.test(row.href) ||
+                    typeof row.title !== 'string' || !row.title.trim() ||
+                    !Number.isSafeInteger(row.count) || row.count < 0) throw new Error('主题数据不正确');
+                if (seen.has(row.href)) continue;
+                seen.add(row.href);
+                boards[metric].push({ href: row.href, title: row.title, count: row.count,
+                    author: typeof row.author === 'string' ? row.author : '',
+                    forum: typeof row.forum === 'string' ? row.forum : '' });
+            }
+        }
+        return { ...data, boards, at: Date.now() };
     }
 
     async function fetchBoards(index, force = false) {
         if (pending.has(index)) return pending.get(index);
         const saved = cache.get(index);
         if (!force && saved && Date.now() - saved.at < TTL) return saved;
-        const request = (async () => {
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 15000);
-            try {
-                const response = await fetch(PERIODS[index].path, {
-                    credentials: 'same-origin', cache: 'no-store', signal: controller.signal
-                });
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                const finalUrl = new URL(response.url, location.origin);
-                if (finalUrl.origin !== location.origin || finalUrl.pathname !== PERIODS[index].path) {
-                    throw new Error('请求被重定向，请检查登录状态');
-                }
-                const result = { boards: parseBoards(await response.text()), at: Date.now() };
-                cache.set(index, result);
-                return result;
-            } finally { clearTimeout(timeout); }
-        })();
+        const url = `${SERVICE}/api/rankings/${PERIODS[index].key}`;
+        const request = new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({ method: 'GET', url, anonymous: true, timeout: 15000,
+                onload: response => {
+                    try {
+                        if (response.status !== 200) throw new Error(`HTTP ${response.status}`);
+                        if ((response.finalUrl || url) !== url) throw new Error('热榜请求被重定向');
+                        const result = parseRanking(JSON.parse(response.responseText), PERIODS[index].key);
+                        cache.set(index, result); resolve(result);
+                    } catch (error) { reject(error); }
+                },
+                onerror: () => reject(new Error('无法连接热榜服务')),
+                ontimeout: () => reject(new Error('热榜请求超时')),
+                onabort: () => reject(new Error('热榜请求已取消'))
+            });
+        });
         pending.set(index, request);
         try { return await request; } finally { pending.delete(index); }
     }
@@ -186,13 +181,19 @@
     function render(result) {
         list.replaceChildren();
         const posts = result.boards[metric];
-        if (!posts.length) list.append(element('li', 'sb-hot-message', '该时段暂无热门主题'));
+        if (!posts.length) list.append(element('li', 'sb-hot-message', result.status.baseline_complete ? '该时段暂无观测到的新增热度' : '正在建立全站基线，稍后开始统计'));
+        const hours = Math.floor(result.observed_seconds / 3600);
+        panel.querySelector('.sb-hot-data-note').textContent = !result.status.baseline_complete ? '正在建立全站基线' :
+            result.status.stale ? '采集延迟 · 暂显示已有统计' :
+            result.coverage_gap ? '统计区间存在采集中断' :
+            result.warming_up ? `统计积累中 · 已记录${hours ? `${hours}小时` : `${Math.floor(result.observed_seconds / 60)}分钟`}` :
+            '服务端快照统计 · 实时为近1小时';
         posts.forEach((post, index) => {
             const li = element('li', 'sb-hot-item');
             li.hidden = !expanded && index >= LIMIT;
             const link = element('a', 'sb-hot-link');
             link.href = post.href;
-            link.title = `${post.title}\n作者：${post.author || '未知'} · ${post.forum}\n${PERIODS[period].label}${metric === 'views' ? '浏览' : '回复'}：${post.count}`;
+            link.title = `${post.title}\n作者：${post.author || '未知'} · ${post.forum}\n${PERIODS[period].label}${metric === 'views' ? '浏览' : '回复'}观测增量：${post.count}`;
             link.append(element('span', `sb-hot-rank sb-hot-rank-${index + 1}`, String(index + 1)),
                 element('span', 'sb-hot-title', post.title), element('span', 'sb-hot-count', String(post.count)));
             li.append(link);
@@ -206,7 +207,7 @@
     async function update(force = false) {
         const token = ++revision;
         const index = period;
-        source.href = PERIODS[index].path;
+        source.href = SERVICE;
         panel.querySelectorAll('[data-period]').forEach(button => button.setAttribute('aria-pressed', String(Number(button.dataset.period) === period)));
         panel.querySelectorAll('[data-metric]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.metric === metric)));
         status.classList.remove('sb-hot-error');
@@ -216,18 +217,18 @@
         refresh.disabled = true;
         const saved = cache.get(index);
         if (saved) render(saved);
-        else { list.replaceChildren(element('li', 'sb-hot-message', '正在读取官方热榜…')); toggle.hidden = true; }
+        else { list.replaceChildren(element('li', 'sb-hot-message', '正在读取热榜…')); toggle.hidden = true; panel.querySelector('.sb-hot-data-note').textContent = '服务端持续统计'; }
         try {
             const result = await fetchBoards(index, force);
             if (token !== revision) return;
             render(result);
-            status.textContent = `${new Date(result.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 获取`;
+            status.textContent = result.updated_at ? `${new Date(result.updated_at * 1000).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 采集` : '等待首次采集';
         } catch (error) {
             if (token !== revision) return;
             status.classList.add('sb-hot-error');
             status.textContent = saved ? '更新失败 · 显示上次数据' : '获取失败 · 点击刷新重试';
             status.title = error.name === 'AbortError' ? '请求超时' : error.message;
-            if (!saved) list.replaceChildren(element('li', 'sb-hot-message', '暂时无法读取官方榜单'));
+            if (!saved) list.replaceChildren(element('li', 'sb-hot-message', '暂时无法读取热榜'));
         } finally {
             if (token === revision) { refresh.disabled = false; panel.setAttribute('aria-busy', 'false'); }
         }
@@ -241,10 +242,10 @@
         panel.id = 'sb-hot-panel';
         panel.setAttribute('aria-label', '烧饼论坛热榜');
         // Static markup only; all downloaded content is rendered with textContent.
-        panel.innerHTML = `<div class="sb-hot-header"><a class="sb-hot-source" href="/pages/top/">烧饼热榜</a><button type="button" class="sb-hot-refresh" aria-label="刷新热榜" title="刷新热榜">↻</button></div>
+        panel.innerHTML = `<div class="sb-hot-header"><a class="sb-hot-source" href="https://sbhot.voee.de/">烧饼热榜</a><button type="button" class="sb-hot-refresh" aria-label="刷新热榜" title="刷新热榜">↻</button></div>
             <div class="sb-hot-periods" role="group" aria-label="榜单时间范围">${PERIODS.map((p, i) => `<button type="button" data-period="${i}" aria-pressed="${i === 0}">${p.label}</button>`).join('')}</div>
             <div class="sb-hot-metrics" role="group" aria-label="排序依据"><button type="button" data-metric="replies" aria-pressed="true">回复热度</button><button type="button" data-metric="views" aria-pressed="false">浏览热度</button></div>
-            <ol class="sb-hot-list" id="sb-hot-list"></ol><div class="sb-hot-footer"><span class="sb-hot-status" role="status" aria-live="polite"></span><button type="button" class="sb-hot-toggle" aria-controls="sb-hot-list" aria-expanded="false" hidden>展开全部 ▾</button></div><p class="sb-hot-note">官方榜单 · 每 15 分钟更新</p>`;
+            <ol class="sb-hot-list" id="sb-hot-list"></ol><div class="sb-hot-footer"><span class="sb-hot-status" role="status" aria-live="polite"></span><button type="button" class="sb-hot-toggle" aria-controls="sb-hot-list" aria-expanded="false" hidden>展开全部 ▾</button></div><p class="sb-hot-note sb-hot-data-note">服务端持续统计</p>`;
         const userCard = sidebar.querySelector('.user-card');
         if (userCard?.parentElement === sidebar) userCard.after(panel);
         else sidebar.prepend(panel);

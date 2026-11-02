@@ -1,0 +1,22 @@
+[Unit]
+Description=SBHOT ranking API and userscript updates
+After=network.target
+
+[Service]
+User=sbhot
+Group=sbhot
+WorkingDirectory=/opt/sbhot/current
+Environment=SBHOT_DATA=/var/lib/sbhot
+Environment=PORT=16611
+ExecStart=/opt/sbhot/venv/bin/python /opt/sbhot/current/backend/server.py
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/sbhot
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,23 @@
+[Unit]
+Description=SBHOT persistent public topic collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=sbhot
+Group=sbhot
+WorkingDirectory=/opt/sbhot/current
+Environment=SBHOT_DATA=/var/lib/sbhot
+ExecStart=/opt/sbhot/venv/bin/python -u /opt/sbhot/current/backend/collector.py
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/sbhot
+UMask=0027
+MemoryMax=400M
+
+[Install]
+WantedBy=multi-user.target
