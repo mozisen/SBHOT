@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         烧饼论坛热榜
 // @namespace    https://sb.sb/
-// @version      2.1.1
+// @version      2.2.0
 // @description  烧饼论坛热榜：日/月榜优先官方，实时/周榜后台统计，低负载混合模式。
 // @author       烧饼热榜适配；原插件 https://www.nodeseek.com/space/10539
 // @match        https://sb.sb/*
@@ -23,7 +23,7 @@
 // Adapted from NodeSeek 热榜插件 1.1 (MIT): sidebar ranking and expand/collapse UI.
 (function () {
     'use strict';
-    const VERSION = '2.1.1';
+    const VERSION = '2.2.0';
     // Reuse the forum's yellow SB brand mark (https://sb.sb/).
     const LOGO = "<svg class=\"sb-hot-logo\" viewBox=\"0 0 46 46\" width=\"26\" height=\"26\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M0 0H46V14l-6 9 6 9V46H0V32l6-9-6-9z\" fill=\"#FFD02F\"></path><path d=\"M16.74 30.64Q15.04 30.64 13.74 30.04 12.43 29.43 11.7 28.29 10.96 27.16 10.96 25.56v-.59h2.73v.59q0 1.33.82 1.99t2.23.66q1.43.0 2.13-.57T19.57 26.19Q19.57 25.58 19.23 25.21 18.88 24.83 18.22 24.59 17.56 24.34 16.61 24.13L16.13 24.03Q14.62 23.69 13.54 23.18q-1.09-.52-1.66-1.36-.58-.84-.58-2.18Q11.3 18.3 11.94 17.34 12.58 16.38 13.75 15.87q1.16-.51 2.74-.51Q18.06 15.36 19.29 15.89 20.52 16.43 21.22 17.49 21.93 18.55 21.93 20.14V20.77H19.2V20.14Q19.2 19.3 18.87 18.79 18.54 18.27 17.94 18.03 17.33 17.79 16.49 17.79 15.23 17.79 14.63 18.26 14.03 18.74 14.03 19.56 14.03 20.1 14.31 20.48 14.6 20.86 15.16 21.11 15.73 21.36 16.61 21.55L17.09 21.66Q18.67 21.99 19.84 22.52q1.16.52 1.81 1.38Q22.3 24.76 22.3 26.11q0 1.34-.68 2.36t-1.93 1.6q-1.25.57-2.95.57zM30.59 30.35H22.94V27.91h1.93V18.09H22.94V15.65H30.5Q31.84 15.65 32.84 16.1 33.84 16.55 34.4 17.38 34.95 18.21 34.95 19.37V19.58Q34.95 20.59 34.58 21.23 34.2 21.87 33.68 22.21 33.17 22.56 32.71 22.71V23.08Q33.17 23.21 33.71 23.56 34.26 23.9 34.65 24.55 35.04 25.21 35.04 26.26V26.46q0 1.22-.57 2.09Q33.9 29.43 32.91 29.89 31.91 30.35 30.59 30.35zm-2.94-6.13v3.61h2.6Q31.15 27.83 31.71 27.39 32.27 26.95 32.27 26.13V25.92Q32.27 25.1 31.72 24.66 31.17 24.22 30.25 24.22h-2.6zm0-6.05V21.7h2.56Q31.07 21.7 31.62 21.26 32.18 20.82 32.18 20.04V19.83Q32.18 19.03 31.63 18.6 31.09 18.17 30.21 18.17H27.65z\" fill=\"#111\"></path></svg>";
     const UPDATE_INTERVAL = 60 * 60 * 1000;
@@ -296,6 +296,157 @@
         #sb-hot-panel .sb-hot-message { padding:32px 12px; text-align:center; font-size:13px; color:var(--text-muted,#555); }
         #sb-hot-panel .sb-hot-error { color:var(--danger,#cf2b2b); }
     `);
+    // Independent of the sidebar: topic pages can use a layout without a sidebar.
+    function replyGuardUid(link) {
+        try {
+            const url = new URL(link?.getAttribute('href') || '', location.origin);
+            return url.origin === location.origin ? url.pathname.match(/^\/u\/(\d+)\/$/)?.[1] || '' : '';
+        } catch (_) { return ''; }
+    }
+
+    function replyGuardAccount(root = document) {
+        const links = [...root.querySelectorAll('.top .nav-mine[href], .top .nav-user-links a.nav-user-item[href], .mobile-menu-section a.mobile-menu-link[href^="/u/"]')]
+            .filter(link => !link.closest('.post-content, article, blockquote'));
+        const uids = [...new Set(links.map(replyGuardUid).filter(Boolean))];
+        return uids.length === 1 ? uids[0] : '';
+    }
+
+    function replyGuardAuthor(post) {
+        if (!post) return '';
+        if (/^\d+$/.test(post.dataset.authorUid || '')) return post.dataset.authorUid;
+        const link = [...post.querySelectorAll('a.post-author[href], .post-author-col a[href]')].find(a =>
+            (!a.closest('[data-reply-no]') || a.closest('[data-reply-no]') === post) &&
+            !a.closest('.post-content, .floor-box-to, blockquote, .quote, .post-sig'));
+        return replyGuardUid(link);
+    }
+
+    function replyGuardRows(root) {
+        return [...root.querySelectorAll('#replies [data-reply-no], .topic-replies [data-reply-no]')]
+            .filter(post => post.matches('.post-item, .floor-box-item'));
+    }
+
+    function replyGuardDecision(pages, thread, uid) {
+        const owner = replyGuardAuthor(pages[0].querySelector(`#post-${thread}`));
+        if (!owner) throw new Error('无法识别楼主');
+        if (owner === uid) return false;
+        const rows = new Map();
+        for (const page of pages) {
+            if (replyGuardAuthor(page.querySelector(`#post-${thread}`)) !== owner) throw new Error('帖子结构已变化');
+            for (const post of replyGuardRows(page)) rows.set(post.dataset.replyNo, post);
+        }
+        const posts = [...rows.values()];
+        if (posts.some(post => !replyGuardAuthor(post))) throw new Error('部分回复作者不可见');
+        const expected = Math.max(0, ...pages.map(page => {
+            const count = page.querySelector('.post-content-stats')?.querySelectorAll('span')[1]?.textContent.replace(/,/g, '').trim();
+            return /^\d+$/.test(count || '') ? Number(count) : 0;
+        }));
+        if (posts.length < expected) throw new Error('部分回复尚未加载或不可见');
+        const own = posts.filter(post => replyGuardAuthor(post) === uid);
+        if (!own.length) return false;
+        const last = Math.max(...own.map(post => Number(post.dataset.replyNo)));
+        const ownFloors = new Set(own.map(post => post.dataset.replyNo));
+        const ownIds = new Set(own.map(post => post.id.match(/^post-(\d+)$/)?.[1]).filter(Boolean));
+        const answered = posts.some(post => {
+            if (Number(post.dataset.replyNo) <= last || replyGuardAuthor(post) !== owner) return false;
+            // A nested child's links and quoted old text are not the parent's response.
+            const links = [...post.querySelectorAll('a[href]')].filter(link =>
+                link.closest('[data-reply-no]') === post && !link.closest('blockquote, .quote, .quote-threads-reference, .reply-reference, .post-sig, .signature'));
+            if (links.some(link => {
+                if (link.closest('.floor-box-to') && replyGuardUid(link) === uid) return true;
+                if (link.closest('.post-content, .floor-box-body') && link.textContent.trim().startsWith('@') && replyGuardUid(link) === uid) return true;
+                if (!link.closest('.post-content, .floor-box-body')) return false;
+                try {
+                    const url = new URL(link.getAttribute('href'), location.origin);
+                    return url.origin === location.origin && url.pathname === `/t/${thread}/` &&
+                        (ownFloors.has(url.searchParams.get('reply')) || ownIds.has(url.searchParams.get('reply_id')));
+                } catch (_) { return false; }
+            })) return true;
+            if (post.matches('.floor-box-item') && !post.querySelector('.floor-box-to')) {
+                const parent = post.closest('.floor-box')?.parentElement?.closest('.post-item[data-reply-no]');
+                return replyGuardAuthor(parent) === uid;
+            }
+            return false;
+        });
+        return !answered;
+    }
+
+    async function replyGuardCheck(thread, uid) {
+        // Only on submit; no background collection or personal data sent to the ranking server.
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 20000);
+        const pending = [`/t/${thread}/`], seen = new Set(), pages = [];
+        const pathPattern = new RegExp(`^/t/${thread}/(?:page/[1-9]\\d*/)?$`);
+        try {
+            while (pending.length) {
+                if (seen.size >= 10) throw new Error('本帖超过 10 页');
+                const path = pending.shift();
+                seen.add(path);
+                const response = await fetch(new URL(path, location.origin).href, {
+                    credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller.signal
+                });
+                if (!response.ok || response.url && new URL(response.url).pathname !== path) throw new Error('论坛读取失败');
+                const html = await response.text();
+                if (html.length > 4000000) throw new Error('页面过大');
+                const page = new DOMParser().parseFromString(html, 'text/html');
+                if (!page.querySelector('#replies, .topic-replies') || replyGuardAccount(page) !== uid) throw new Error('登录状态或页面结构已变化');
+                pages.push(page);
+                for (const link of page.querySelectorAll('#replies .pagination a[href], .topic-replies .pagination a[href]')) {
+                    if (link.closest('[data-reply-no], .post-content, blockquote')) continue;
+                    const url = new URL(link.getAttribute('href'), location.origin);
+                    if (url.origin !== location.origin || !pathPattern.test(url.pathname)) throw new Error('分页地址异常');
+                    if (!seen.has(url.pathname) && !pending.includes(url.pathname)) pending.push(url.pathname);
+                }
+            }
+            return replyGuardDecision(pages, thread, uid);
+        } finally { clearTimeout(timer); }
+    }
+
+    const replyGuardPending = new WeakSet();
+    let replyGuardPermit = null;
+    document.addEventListener('submit', async event => {
+        const form = event.target;
+        if (!(form instanceof HTMLFormElement) || !form.querySelector('textarea#reply-body[name="body"]') || !form.closest('#reply, .reply-panel')) return;
+        if (replyGuardPermit === form) { replyGuardPermit = null; return; }
+        const thread = location.pathname.match(/^\/t\/(\d+)\/(?:page\/\d+\/)?$/)?.[1];
+        if (!thread) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (replyGuardPending.has(form)) return;
+        replyGuardPending.add(form);
+        const uid = replyGuardAccount(), href = location.href, submitter = event.submitter;
+        // FormData also includes reply target and editor mode; a changed draft needs a new check.
+        const signature = () => JSON.stringify([...new FormData(form)].map(([key, value]) => [key, typeof value === 'string' ? value : [value.name, value.size, value.lastModified]]));
+        const original = signature();
+        let edited = false;
+        const onEdit = () => { edited = true; };
+        form.addEventListener('input', onEdit, true);
+        const unchanged = () => !edited && form.isConnected && location.href === href && replyGuardAccount() === uid && signature() === original;
+        const notice = document.createElement('span');
+        notice.setAttribute('role', 'status');
+        notice.textContent = ' 正在核对楼主是否已回复你…';
+        form.appendChild(notice);
+        try {
+            let message = '';
+            try {
+                if (!uid) throw new Error('无法识别当前账号');
+                if (await replyGuardCheck(thread, uid)) message = '你已经回复过这个帖子，但楼主在你最近一次回复后尚未直接回复你。\n\n仍要发送这条回复吗？\n选择“取消”将保留草稿。';
+            } catch (_) {
+                message = '暂时无法完整核实本帖的回复记录（网络、登录状态或分页限制）。\n\n仍要发送这条回复吗？\n选择“取消”将保留草稿。';
+            }
+            if (!unchanged()) return;
+            if (message && !window.confirm(message)) return;
+            if (!unchanged()) return;
+            replyGuardPermit = form;
+            // Let the forum perform its own validation and submission, exactly once.
+            try { HTMLFormElement.prototype.requestSubmit.call(form, submitter?.form === form ? submitter : undefined); }
+            finally { replyGuardPermit = null; }
+        } finally {
+            form.removeEventListener('input', onEdit, true);
+            notice.remove();
+            replyGuardPending.delete(form);
+        }
+    }, true);
+
     mount();
     // The forum can replace sidebar content during navigation. Only remount when necessary.
     const observer = new MutationObserver(() => { if (!document.getElementById('sb-hot-panel')) mount(); });
