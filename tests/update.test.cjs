@@ -21,12 +21,12 @@ function setup(t, store = {}, start = 1800000000000) {
     w.eval(script);
     return { requests, store, menus, w, advance: ms => { now += ms; },
         poll: () => timers.filter(timer => timer.ms === 60000).at(-1).fn(),
-        finish: (version, overrides = {}) => requests.at(-1).onload({ status: 200, responseText: meta.replace('@version      2.2.0', `@version      ${version}`), ...overrides }) };
+        finish: (version, overrides = {}) => requests.at(-1).onload({ status: 200, responseText: meta.replace('@version      2.2.1', `@version      ${version}`), ...overrides }) };
 }
 test('发布元数据、源代码和 package 版本一致，固定 GitHub 更新路径', () => {
     assert.equal(meta.trim(), script.match(/^\/\/ ==UserScript==[\s\S]*?\/\/ ==\/UserScript==/)[0]);
-    assert.equal(JSON.parse(fs.readFileSync('package.json')).version, '2.2.0');
-    assert.match(script, /const VERSION = '2\.2\.0'/);
+    assert.equal(JSON.parse(fs.readFileSync('package.json')).version, '2.2.1');
+    assert.match(script, /const VERSION = '2\.2\.1'/);
     assert.match(meta, /@updateURL\s+https:\/\/sbhot\.voee\.de\/shaobing-hot\.meta\.js/);
     assert.match(meta, /@downloadURL\s+https:\/\/sbhot\.voee\.de\/shaobing-hot\.user\.js/);
     assert.doesNotMatch(meta, /@connect\s+\*/);
@@ -37,7 +37,7 @@ test('首次检测、一小时节流、持久化跨刷新与进行中去重', t 
     assert.equal(s.requests.length, 1); s.poll(); assert.equal(s.requests.length, 1);
     assert.equal(s.requests[0].anonymous, true);
     assert.equal(s.requests[0].timeout, 15000);
-    s.finish('2.2.0'); s.advance(HOUR - 1); s.poll(); assert.equal(s.requests.length, 1);
+    s.finish('2.2.1'); s.advance(HOUR - 1); s.poll(); assert.equal(s.requests.length, 1);
     const reopened = setup(t, store); assert.equal(reopened.requests.length, 0);
     s.advance(1); s.poll(); assert.equal(s.requests.length, 2);
 });
@@ -51,7 +51,7 @@ test('新版本仅更新刷新按钮提示，不恢复底栏或执行远程代�
     assert.doesNotMatch(script, /\beval\s*\(|new Function\s*\(/);
 });
 test('同版本、旧版本不显示安装入口，按数字比较版本', t => {
-    for (const version of ['2.2.0', '1.0.99', '0.99.99']) {
+    for (const version of ['2.2.1', '1.0.99', '0.99.99']) {
         const s = setup(t); s.finish(version);
         assert.doesNotMatch(s.w.document.querySelector('.sb-hot-refresh').title, /发现 v/);
     }
@@ -61,9 +61,9 @@ test('错误状态、错误脚本身份、恶意重定向不保存新版', t => 
         { status: 500 }, { responseText: '<html>error</html>' },
         { responseText: meta.replace('烧饼论坛热榜', '其他脚本') },
         { finalUrl: 'https://evil.example/script.meta.js' },
-        { responseText: meta.replace('2.2.0', '2.2.0-beta') }
+        { responseText: meta.replace('2.2.1', '2.2.1-beta') }
     ]) {
-        const s = setup(t); s.finish('2.2.0', overrides);
+        const s = setup(t); s.finish('2.2.1', overrides);
         assert.equal(s.store['sb-hot-update-v1'].latest, undefined);
         assert.match(s.w.document.querySelector('.sb-hot-refresh').title, /失败/);
     }
@@ -72,7 +72,7 @@ test('请求超时可用菜单立即重试，自动重试仍按一小时节流',
     const s = setup(t); s.requests[0].ontimeout();
     assert.match(s.w.document.querySelector('.sb-hot-refresh').title, /超时/);
     s.poll(); assert.equal(s.requests.length, 1);
-    s.menus[0](); assert.equal(s.requests.length, 2); s.finish('2.2.0');
+    s.menus[0](); assert.equal(s.requests.length, 2); s.finish('2.2.1');
     assert.match(s.w.document.querySelector('.sb-hot-refresh').title, /已检查/);
 });
 test('时钟回拨不会永久禁止版本检查', t => {

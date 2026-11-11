@@ -1,8 +1,10 @@
-const { test } = require('node:test');
+const { test: nodeTest } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const { JSDOM } = require('jsdom');
-const script = fs.readFileSync('shaobing-hot.user.js', 'utf8');
+for (const variant of ['shaobing-hot', 'shaobing-reply-reminder']) {
+const test = (name, fn) => nodeTest(variant + ': ' + name, fn);
+const script = fs.readFileSync(variant + '.user.js', 'utf8');
 const tick = () => new Promise(r => setTimeout(r, 30));
 const row = (floor, uid, content = '', klass = 'post-item') => `<${klass === 'floor-box-item' ? 'div' : 'li'} class="${klass}" data-reply-no="${floor}" id="post-${100 + floor}"><div class="post-head"><a class="post-author" href="/u/${uid}/">User${uid}</a></div><div class="${klass === 'floor-box-item' ? 'floor-box-body' : 'post-content'}">${content}</div></${klass === 'floor-box-item' ? 'div' : 'li'}>`;
 const html = (rows = '', options = {}) => `<div class="top"><a class="nav-mine" href="/u/${options.uid || 2}/">我的</a></div><li id="post-42"><a class="post-author" href="/u/1/">楼主</a></li><section id="replies">${rows}${options.pager || ''}</section><div id="reply"><form method="post" action="/t/42/reply/"><textarea id="reply-body" name="body">保留的草稿</textarea><input name="reply_to" value=""><button type="submit" name="send" value="1">发送</button></form></div>`;
@@ -12,7 +14,12 @@ function setup(t, content, options = {}) {
     const w = dom.window, prompts = [], requests = [], sends = [];
     w.GM_addStyle = () => {};
     w.GM_xmlhttpRequest = o => o.onerror();
-    w.confirm = message => { prompts.push(message); return options.accept ?? false; };
+    w.HTMLDialogElement.prototype.showModal = function () {
+        prompts.push(this.querySelector('p').textContent);
+        queueMicrotask(() => this.querySelector(options.accept ? '[data-continue]' : '[data-cancel]').click());
+    };
+    w.HTMLDialogElement.prototype.close = function () {};
+    w.confirm = () => { throw Error('Native confirm must not be used'); };
     w.fetch = async (url, init) => {
         requests.push({ url, init });
         const body = options.fetcher ? await options.fetcher(url) : content;
@@ -114,3 +121,5 @@ test('分页只能来自当前帖，外站和其他帖不会被请求', async t 
         s.send(); await tick(); assert.equal(s.requests.length, 1); assert.match(s.prompts[0], /无法完整核实/);
     }
 });
+
+}

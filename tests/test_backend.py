@@ -145,6 +145,10 @@ class BackendTests(unittest.TestCase):
         thread.start()
         base = f'http://127.0.0.1:{http.server_port}'
         try:
+            for suffix in ['meta.js', 'user.js']:
+                filename = f'shaobing-reply-reminder.{suffix}'
+                with urllib.request.urlopen(f'{base}/{filename}') as response:
+                    self.assertEqual(response.read(), (server.ROOT / filename).read_bytes())
             for path in ['/healthz', '/api/status'] + [f'/api/rankings/{p}' for p in WINDOWS]:
                 with urllib.request.urlopen(base + path) as response:
                     self.assertEqual(response.status, 200)

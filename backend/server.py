@@ -38,7 +38,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path).path
-        if path in ('/shaobing-hot.user.js', '/shaobing-hot.meta.js'):
+        if path in ('/shaobing-hot.user.js', '/shaobing-hot.meta.js',
+                    '/shaobing-reply-reminder.user.js', '/shaobing-reply-reminder.meta.js'):
             file = ROOT / path[1:]
             if not file.is_file():
                 self.send(503, '{"error":"release_unavailable"}')

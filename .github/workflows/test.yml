@@ -15,7 +15,7 @@ jobs:
       - run: npm test
       - run: npm run check
       - run: npm run build:meta
-      - run: git diff --exit-code -- shaobing-hot.meta.js
+      - run: git diff --exit-code -- shaobing-hot.user.js shaobing-hot.meta.js shaobing-reply-reminder.user.js shaobing-reply-reminder.meta.js
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'

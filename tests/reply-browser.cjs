@@ -18,7 +18,7 @@ const assert = require('node:assert/strict');
         });
         await page.goto('https://sb.sb/t/42/');
         await page.evaluate(() => {
-            window.GM_addStyle = () => {};
+            window.GM_addStyle = css => { const style = document.createElement('style'); style.textContent = css; document.head.append(style); };
             window.GM_xmlhttpRequest = o => o.onerror();
             window.sends = 0;
             // Register the forum's bubbling handler before the userscript, as on the real page.
@@ -28,20 +28,32 @@ const assert = require('node:assert/strict');
             });
         });
         await page.addScriptTag({ content: fs.readFileSync('shaobing-hot.user.js', 'utf8') });
-        let dialogs = 0;
-        page.on('dialog', async dialog => {
-            dialogs++;
-            assert.match(dialog.message(), /尚未直接回复你/);
-            if (dialogs === 1) await dialog.dismiss(); else await dialog.accept();
-        });
-        await page.getByRole('button', { name: '发送' }).click();
+        // Both installed together must share a single guard, including separate script scopes.
+        await page.addScriptTag({ content: fs.readFileSync('shaobing-reply-reminder.user.js', 'utf8') });
+        await page.getByRole('button', { name: '发送', exact: true }).click();
+        const dialog = page.getByRole('dialog');
+        await dialog.waitFor();
+        assert.equal(await dialog.count(), 1);
+        assert.match(await dialog.innerText(), /尚未直接回复你/);
+        for (const [width, height, scheme] of [[1280, 900, 'light'], [390, 844, 'dark']]) {
+            await page.setViewportSize({ width, height });
+            await page.emulateMedia({ colorScheme: scheme });
+            const box = await dialog.boundingBox();
+            assert.ok(Math.abs(box.x + box.width / 2 - width / 2) < 2);
+            assert.ok(Math.abs(box.y + box.height / 2 - height / 2) < 2);
+            assert.ok(box.width < width);
+            await page.screenshot({ path: `artifacts/reply-dialog-${scheme}.png` });
+        }
+        assert.equal(await page.evaluate(() => document.activeElement.textContent), '取消');
+        await page.keyboard.press('Escape');
         await page.waitForFunction(() => !document.querySelector('[role=status]'));
-        assert.equal(dialogs, 1);
         assert.equal(await page.evaluate(() => window.sends), 0);
         assert.equal(await page.locator('textarea').inputValue(), '草稿');
         await page.locator('textarea').press('Control+Enter');
+        await dialog.waitFor();
+        await page.getByRole('button', { name: '继续发送', exact: true }).click();
         await page.waitForFunction(() => window.sends === 1);
-        assert.equal(dialogs, 2);
+        assert.equal(await dialog.count(), 0);
         assert.deepEqual(errors, []);
         assert.ok(requests.every(method => method === 'GET'));
         console.log('Reply browser checks passed: cancel, draft retention, keyboard confirm, exactly one native submission.');

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         烧饼论坛热榜
 // @namespace    https://sb.sb/
-// @version      2.2.0
+// @version      2.2.1
 // @description  烧饼论坛热榜：日/月榜优先官方，实时/周榜后台统计，低负载混合模式。
 // @author       烧饼热榜适配；原插件 https://www.nodeseek.com/space/10539
 // @match        https://sb.sb/*
@@ -23,7 +23,7 @@
 // Adapted from NodeSeek 热榜插件 1.1 (MIT): sidebar ranking and expand/collapse UI.
 (function () {
     'use strict';
-    const VERSION = '2.2.0';
+    const VERSION = '2.2.1';
     // Reuse the forum's yellow SB brand mark (https://sb.sb/).
     const LOGO = "<svg class=\"sb-hot-logo\" viewBox=\"0 0 46 46\" width=\"26\" height=\"26\" aria-hidden=\"true\" focusable=\"false\"><path d=\"M0 0H46V14l-6 9 6 9V46H0V32l6-9-6-9z\" fill=\"#FFD02F\"></path><path d=\"M16.74 30.64Q15.04 30.64 13.74 30.04 12.43 29.43 11.7 28.29 10.96 27.16 10.96 25.56v-.59h2.73v.59q0 1.33.82 1.99t2.23.66q1.43.0 2.13-.57T19.57 26.19Q19.57 25.58 19.23 25.21 18.88 24.83 18.22 24.59 17.56 24.34 16.61 24.13L16.13 24.03Q14.62 23.69 13.54 23.18q-1.09-.52-1.66-1.36-.58-.84-.58-2.18Q11.3 18.3 11.94 17.34 12.58 16.38 13.75 15.87q1.16-.51 2.74-.51Q18.06 15.36 19.29 15.89 20.52 16.43 21.22 17.49 21.93 18.55 21.93 20.14V20.77H19.2V20.14Q19.2 19.3 18.87 18.79 18.54 18.27 17.94 18.03 17.33 17.79 16.49 17.79 15.23 17.79 14.63 18.26 14.03 18.74 14.03 19.56 14.03 20.1 14.31 20.48 14.6 20.86 15.16 21.11 15.73 21.36 16.61 21.55L17.09 21.66Q18.67 21.99 19.84 22.52q1.16.52 1.81 1.38Q22.3 24.76 22.3 26.11q0 1.34-.68 2.36t-1.93 1.6q-1.25.57-2.95.57zM30.59 30.35H22.94V27.91h1.93V18.09H22.94V15.65H30.5Q31.84 15.65 32.84 16.1 33.84 16.55 34.4 17.38 34.95 18.21 34.95 19.37V19.58Q34.95 20.59 34.58 21.23 34.2 21.87 33.68 22.21 33.17 22.56 32.71 22.71V23.08Q33.17 23.21 33.71 23.56 34.26 23.9 34.65 24.55 35.04 25.21 35.04 26.26V26.46q0 1.22-.57 2.09Q33.9 29.43 32.91 29.89 31.91 30.35 30.59 30.35zm-2.94-6.13v3.61h2.6Q31.15 27.83 31.71 27.39 32.27 26.95 32.27 26.13V25.92Q32.27 25.1 31.72 24.66 31.17 24.22 30.25 24.22h-2.6zm0-6.05V21.7h2.56Q31.07 21.7 31.62 21.26 32.18 20.82 32.18 20.04V19.83Q32.18 19.03 31.63 18.6 31.09 18.17 30.21 18.17H27.65z\" fill=\"#111\"></path></svg>";
     const UPDATE_INTERVAL = 60 * 60 * 1000;
@@ -296,6 +296,56 @@
         #sb-hot-panel .sb-hot-message { padding:32px 12px; text-align:center; font-size:13px; color:var(--text-muted,#555); }
         #sb-hot-panel .sb-hot-error { color:var(--danger,#cf2b2b); }
     `);
+    // BEGIN SHARED REPLY GUARD
+// Shared, build-time embedded module. No remote runtime dependency.
+(function installReplyGuard() {
+    'use strict';
+    if (document.documentElement.hasAttribute('data-sb-reply-guard')) return;
+    document.documentElement.setAttribute('data-sb-reply-guard', '1.01');
+    GM_addStyle(`
+        dialog.sb-reply-dialog { position:fixed!important; inset:0!important; margin:auto!important;
+            box-sizing:border-box; width:min(440px,calc(100vw - 32px)); height:fit-content;
+            max-height:calc(100dvh - 32px); overflow:auto; padding:24px; border:1px solid var(--line,#ddd);
+            border-radius:16px; background:var(--panel,#fff); color:var(--text,#222);
+            box-shadow:0 16px 60px #0004; font:15px/1.7 system-ui,sans-serif; text-align:left; }
+        dialog.sb-reply-dialog::backdrop { background:rgba(0,0,0,.48); }
+        .sb-reply-dialog h2 { margin:0 0 12px; font:700 19px/1.4 system-ui,sans-serif; color:inherit; }
+        .sb-reply-dialog p { white-space:pre-line; margin:0; color:inherit; overflow-wrap:anywhere; }
+        .sb-reply-dialog .sb-reply-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:22px; }
+        .sb-reply-dialog button { box-sizing:border-box; min-height:44px; padding:8px 18px; border:1px solid var(--line,#ccc);
+            border-radius:9px; font:600 14px/1.5 system-ui,sans-serif; background:var(--panel-alt,#f5f5f5); color:inherit; cursor:pointer; }
+        .sb-reply-dialog button[data-continue] { background:#ffd02f; color:#222; border-color:#d6aa11; }
+        .sb-reply-dialog button:focus-visible { outline:3px solid #3378cf; outline-offset:3px; }
+        @media(prefers-color-scheme:dark) { dialog.sb-reply-dialog { background:var(--panel,#202124); color:var(--text,#eee); }
+            .sb-reply-dialog button { background:var(--panel-alt,#303134); } }
+    `);
+    function replyGuardConfirm(message) {
+        return new Promise(resolve => {
+            const previous = document.activeElement;
+            const dialog = document.createElement('dialog');
+            dialog.className = 'sb-reply-dialog';
+            dialog.setAttribute('aria-labelledby', 'sb-reply-dialog-title');
+            dialog.setAttribute('aria-describedby', 'sb-reply-dialog-message');
+            dialog.innerHTML = '<h2 id="sb-reply-dialog-title">重复回帖提醒</h2><p id="sb-reply-dialog-message"></p><div class="sb-reply-actions"><button type="button" data-cancel autofocus>取消</button><button type="button" data-continue>继续发送</button></div>';
+            dialog.querySelector('p').textContent = message;
+            let finished = false;
+            const finish = accepted => {
+                if (finished) return;
+                finished = true;
+                dialog.close();
+                dialog.remove();
+                if (previous?.isConnected) previous.focus({ preventScroll: true });
+                resolve(accepted);
+            };
+            dialog.querySelector('[data-cancel]').onclick = () => finish(false);
+            dialog.querySelector('[data-continue]').onclick = () => finish(true);
+            dialog.addEventListener('cancel', event => { event.preventDefault(); finish(false); });
+            dialog.addEventListener('close', () => finish(false));
+            document.body.appendChild(dialog);
+            dialog.showModal();
+            dialog.querySelector('[data-cancel]').focus();
+        });
+    }
     // Independent of the sidebar: topic pages can use a layout without a sidebar.
     function replyGuardUid(link) {
         try {
@@ -434,7 +484,7 @@
                 message = '暂时无法完整核实本帖的回复记录（网络、登录状态或分页限制）。\n\n仍要发送这条回复吗？\n选择“取消”将保留草稿。';
             }
             if (!unchanged()) return;
-            if (message && !window.confirm(message)) return;
+            if (message && !await replyGuardConfirm(message)) return;
             if (!unchanged()) return;
             replyGuardPermit = form;
             // Let the forum perform its own validation and submission, exactly once.
@@ -446,6 +496,9 @@
             replyGuardPending.delete(form);
         }
     }, true);
+
+})();
+// END SHARED REPLY GUARD
 
     mount();
     // The forum can replace sidebar content during navigation. Only remount when necessary.
